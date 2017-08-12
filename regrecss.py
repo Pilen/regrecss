@@ -9,6 +9,7 @@ import sys
 import tarfile
 import os
 import io
+import math
 from pathlib import Path
 
 from PIL import Image, ImageChops
@@ -21,37 +22,44 @@ gui_height = 86
 
 # Global variables ftw
 current_test = None
+directory = None
 all_tests = []
 test_index = itertools.count()
 snap_count = itertools.count()
-environment = {"browser":None, "window":None}
+environment = {}
 
 
-def add_action(action):
-    test = all_tests[-1]
-    test.queue.append(action)
-    return test
-def action(action_class):
-    environment[action_class.__name__] = action_class
-    return action_class
+def action(action):
+    environment[action.__name__] = action
+    def temp(*args, **kwargs):
+        print(">>>", action.__name__)
+        action(*args, **kwargs)
+    return action
 
 
 @action
 class Test:
     def __init__(self, name=None):
-        all_tests.append(self);
+        all_tests.append(self)
+        global current_test
         self.index = next(test_index)
         self.name = name or f"test{self.index}"
-        self.queue = []
         self.snap_index = itertools.count()
-        self.window = None
 
-class Multi:
-    def __init__(self, items):
-        add_action(self)
-        self.items = items
-    def __iter__(self):
-        return iter(self.items)
+        if current_test != None:
+            current_test.driver.quit()
+        current_test = self
+
+        options = webdriver.ChromeOptions()
+        options.add_argument("disable-infobars")
+        # options.add_argument(f"window-size={window.width}x{window.height}")
+        desired = DesiredCapabilities.CHROME
+        desired ['loggingPrefs'] = { 'browser':'ALL' }
+        self.driver = webdriver.Chrome(chrome_options=options, desired_capabilities=desired)
+        current = current_test.driver.get_window_size()
+        print("Test:", current)
+        self.window = Window(current["width"], current["height"], "default")
+
 
 @action
 class Window:
@@ -59,109 +67,71 @@ class Window:
         self.width = width
         self.height = height
         self.name = name or f"{width}x{height}"
-    def go(self, driver, test):
-        print("window going")
-        test.window = self
-        driver.set_window_size(self.width + gui_width, self.height + gui_height)
-@action
-class windows(Multi):
-    pass
+    def resize(self):
+        current_test.window = self
+        current_test.driver.set_window_size(self.width + gui_width,
+                                            self.height + gui_height)
 
 @action
-class url:
-    def __init__(self, path):
-        add_action(self)
-        self.path = path
-    def go(self, driver, test):
-        driver.get(expand_url(self.path))
+def url(path):
+    current_test.driver.get(expand_url(path))
 
 @action
-class snap:
-    def __init__(self, name=None):
-        test = add_action(self)
-        self.index = next(test.snap_index)
-        self.name = name or str(self.index)
-    def go(self, driver, test):
-        print("kanin")
-        window_name = test.window.name if test.window else "default"
-        driver.get_screenshot_as_file(f"{next(snap_count)}:{test.name}:{window_name}:{self.index}:.png")
+def snap(name=None):
+    index = next(current_test.snap_index)
+    name = name or str(index)
+    window_name = current_test.window.name if current_test.window else "default"
+    current_test.driver.get_screenshot_as_file(directory / f"{next(snap_count)}:{current_test.name}:{window_name}:{index}:.png")
 
 @action
-class wait:
-    def __init__(self, duration):
-        add_action(self)
-        self.duration = duration
-    def go(self, driver, test):
-        time.sleep(self.duration)
+def wait(duration):
+    time.sleep(duration)
 
 @action
-class output:
-    def __init__(self, message):
-        add_action(self)
-        self.message = message
-    def go(self, driver, test):
-        print(self.message)
+def await_output(query):
+    while True:
+        for entry in current_test.driver.get_log("browser"):
+            if entry["source"] == "console-api":
+                message = entry["message"].split('"', 1)[1][:-1]
+                if message == query:
+                    return
+        time.sleep(0.1)
 
 @action
-class await_output:
-    def __init__(self, query):
-        add_action(self)
-        self.query = query
-    def go(self, driver, test):
-        while True:
-            for entry in driver.get_log("browser"):
-                if entry["source"] == "console-api":
-                    message = entry["message"].split('"', 1)[1][:-1]
-                    if message == self.query:
-                        return
-            time.sleep(0.1)
+def resize(a, b=None):
+    if isintance(a, Window) and b == None:
+        a.resize()
+    else:
+        Window(a, b).resize()
+@action
+def await_window_change():
+    print("Awaiting window change...")
+    # previous = current_test.driver.get_window_size()
+    previous = {"width": current_test.window.width, "height":current_test.window.height}
+    print("Await:", previous)
+    while True:
+        current = current_test.driver.get_window_size()
+        if "width" not in current or "height" not in current:
+            print("Browser quit unexpectedly")
+            sys.exit(-1)
+        if current["width"] != previous["width"] or current["height"] != previous["height"]:
+            return
+        time.sleep(0.1)
 
 @action
-class resize:
-    def __init__(self, width, height):
-        add_action(self)
-        self.width = width
-        self.height = height
-    def go(self, driver, test):
-        driver.set_window_size(self.width + gui_width, self.height + gui_height)
+def ensure_window(width=None, height=None):
+    if isintance(a, Window) and b == None:
+        width = a.width
+        height = a.height
+    else:
+        width = width or test.window.width
+        height = height or test.width.height
+    current = current_test.driver.get_window_size()
+    print(f"Actual window {current['width']} x {current['height']}")
+    if current["width"] + gui_width != width or current["height"] + gui_height != height:
+        print("Dimensions does not match")
+        sys.exit(-1)
 
-@action
-class await_window_change:
-    def __init__(self):
-        add_action(self)
-    def go(self, driver, test):
-        previous = driver.get_window_size()
-        while True:
-            current = driver.get_window_size()
-            if current["width"] != previous["width"] or current["height"] != previous["height"]:
-                return
-            time.sleep(0.1)
-
-@action
-class ensure_window:
-    def __init__(self, width=None, height=None):
-        add_action(self)
-        self.width = width
-        self.height = height
-    def go(self, driver, test):
-        current = driver.get_window_size()
-        width = self.width or test.window.width
-        height = self.height or test.width.height
-        print(f"Actual window {current['width']} x {current['height']}")
-        if current["width"] + gui_width != width or current["height"] + gui_height != height:
-            pass
-            # sys.exit(-1)
-
-
-def ensure_correctness():
-    # if len(all_windows) == 0:
-    #     print("Error in config. No windows defined")
-    if len(all_tests) == 0:
-        print("Error in config. No tests defined")
-    # if not ensure_unique_names(all_windows):
-    #     print("Error in config file. Windows with identical names")
-    if not ensure_unique_names(all_tests):
-        print("Error in config file. Tests with identical names")
 
 def ensure_unique_names(items):
     unique = set(item.name for item in items)
@@ -172,69 +142,100 @@ def expand_url(initial):
         return "http://" + initial
     return initial
 
-def create_test_suite(config):
-    current_directory = Path(".").absolute()
-    config = config.absolute()
-    with tempfile.TemporaryDirectory() as directory:
-        os.chdir(directory)
-        shutil.copyfile(config, "config.py")
-        execute_tests(config)
-        with tarfile.open(current_directory / "testsuite.regrecss", "w") as tar:
-            for name in Path(".").iterdir():
-                tar.add(name)
+
+def execute_tests(config):
+    """Run the python script to generate pictures"""
+    if isinstance(config, Path):
+        with open(config) as config_file:
+            config_content = config_file.read()
+    else:
+        config_content = config
+    exec(config_content, environment)
+    if current_test == None:
+        print("No tests in testsuite")
+        sys.exit(-1)
+    current_test.driver.quit()
+    if not ensure_unique_names(all_tests):
+        print("Error in config file. Tests with identical names")
+        sys.exit(-1)
+
+def create_test_suite(testsuite, configs):
+    testsuite = Path(testsuite).absolute()
+    configs = [Path(config).absolute() for config in configs]
+    os.chdir(testsuite.parent)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        global directory
+        directory = Path(tmpdir)
+        for i, config in enumerate(configs):
+            new_name = "{}.py".format(i)
+            shutil.copyfile(config, directory/new_name)
+            execute_tests(config)
+        with tarfile.open(testsuite, "w") as tar:
+            print("Adding", directory.absolute())
+            # tar.add(directory.absolute(), arcname="testsuite_DO_NOT_MODIFY")
+            for path in directory.iterdir():
+                tar.add(path, arcname=Path("testsuite_DO_NOT_MODIFY")/path.name)
+
 
 def execute_test_suite(testsuite):
-    current_directory = Path(".").absolute()
-    testsuite = testsuite.absolute()
-    with tempfile.TemporaryDirectory() as directory:
-        os.chdir(directory)
+    testsuite = Path(testsuite).absolute()
+    os.chdir(testsuite.parent)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        global directory
+        directory = Path(tmpdir)
         with tarfile.open(testsuite) as tar:
-            config_infos = set()
+            config_infos = list()
             image_infos = list()
             for tarinfo in tar:
+                name = tarinfo.name.split("/")[1]
+                tarinfo.name = name
                 if tarinfo.name.endswith(".py"):
-                    config_infos.add(tarinfo)
+                    config_infos.append(tarinfo)
                 elif tarinfo.name.endswith(".png"):
                     image_infos.append(tarinfo)
                 else:
                     print("ERROR: Unknown filetype", tarinfo.name)
-                    sys.exit(-1)
+                    # sys.exit(-1)
+
+            config_infos.sort(key=lambda c: int(c.name.split(".")[0]))
+
             for tarinfo in config_infos:
                 fileobj = tar.extractfile(tarinfo)
                 execute_tests(fileobj.read())
 
             base_names = set(tarinfo.name for tarinfo in image_infos)
-            new_names = set(path.name for path in Path(".").glob("*.png"))
+            new_names = set(path.name for path in directory.glob("*.png"))
             if len(base_names) != len(new_names) or not all(name in new_names for name in base_names):
                 print("ERROR: There are unexpected inconsistencies between the testsuites image set and the newly created")
+                print(base_names)
+                print(new_names)
                 sys.exit(-1)
 
             results = []
             for tarinfo in image_infos:
-                print(tarinfo.name)
                 fileobj = tar.extractfile(tarinfo)
                 byteio = io.BytesIO(fileobj.read())
                 base_image = Image.open(byteio)
-                new_image = Image.open(tarinfo.name)
+                new_image = Image.open(directory / tarinfo.name)
                 comparison = Comparison(tarinfo.name, base_image, new_image)
                 results.append(comparison)
-    os.chdir(current_directory)
-    report(results)
+    console_report(results)
 
-def report(comparisons):
+def console_report(comparisons):
     comparisons.sort(key=lambda c: c.index)
     failed = 0
     for comparison in comparisons:
         if comparison.changed != 0:
             failed += 1
             percentage = comparison.changed / (comparison.changed + comparison.unchanged) * 100
+            percentage = math.ceil((percentage * 10)) / 10
+            print(comparison.changed, comparison.unchanged)
             print(f"Test {comparison.index} failed! Test {comparison.test}:{comparison.snap} {comparison.window} differs by {percentage:.1f}%")
             comparison.image.save(comparison.description)
     if failed:
         print(f"{failed} out of {len(comparisons)} tests failed!")
     else:
         print(f"{len(comparisons)} tests completed successfully.")
-
 
 class Comparison:
     def __init__(self, description, base, new):
@@ -262,53 +263,39 @@ class Comparison:
 
 
 
-
-def execute_tests(config):
-    """Run the python script to generate pictures"""
-    if isinstance(config, Path):
-        with open(config) as config_file:
-            config_content = config_file.read()
-    else:
-        config_content = config
-    exec(config_content, environment)
-    ensure_correctness()
-    for test in all_tests:
-        options = webdriver.ChromeOptions()
-        options.add_argument("disable-infobars")
-        # options.add_argument(f"window-size={window.width}x{window.height}")
-        desired = DesiredCapabilities.CHROME
-        desired ['loggingPrefs'] = { 'browser':'ALL' }
-        driver = webdriver.Chrome(chrome_options=options, desired_capabilities=desired)
-        recurse(driver, test, 0)
-        driver.quit()
-def recurse(driver, test, index):
-    if index >= len(test.queue):
-        return
-    action = test.queue[index]
-    print(">>>", action.__class__.__name__)
-    if isinstance(action, Multi):
-        print("is multi")
-        for instance in action:
-            instance.go(driver, test)
-            recurse(driver, test, index+1)
-    else:
-        action.go(driver, test)
-        recurse(driver, test, index+1)
-
-
-
 def main():
-    parser = argparse.ArgumentParser()
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--create", help="Create a new test suite from a config to test against", default=None)
-    group.add_argument("--test", help="Test against a testsuite", default=None)
+    parser = argparse.ArgumentParser(description="A tool for regression testing webpages/CSS", add_help=False)
+    # group = parser.add_mutually_exclusive_group(required=True)
+    # group.add_argument("--create", help="Create a new test suite from a config to test against", default=None)
+    # group.add_argument("--test", help="Test against a testsuite", default=None)
+    parser.add_argument("-h", "--help", action="store_true")
+    subparsers = parser.add_subparsers(dest="subcommand")
+    parser_create = subparsers.add_parser("create", help="Create a new testsuite", add_help=False)
+    parser_create.add_argument("testsuite", help="filename for the testsuite")
+    parser_create.add_argument("config", nargs="+", help="Config file[s] to use in the testsuite")
+    parser_create.set_defaults(func=create_test_suite)
+
+    parser_test = subparsers.add_parser("test", help="Test using an existing testsuite", add_help=False)
+    parser_test.add_argument("testsuite", help="The testsuite to execute")
+    parser_test.set_defaults(func=execute_test_suite)
+
+    def help():
+        print(parser.format_help())
+        print("\n#### create ####")
+        print(parser_create.format_help())
+        print("\n#### test ####")
+        print(parser_test.format_help())
+
     args = parser.parse_args()
 
-    if args.create:
-        create_test_suite(Path(args.create))
-    elif args.test:
-        execute_test_suite(Path(args.test))
-
+    if args.help or args.subcommand == None:
+        help()
+    elif args.subcommand == "create":
+        create_test_suite(Path(args.testsuite), [Path(config) for config in args.config])
+    elif args.subcommand == "test":
+        execute_test_suite(Path(args.testsuite))
+    else:
+        assert False
     sys.exit(1)
 
 if __name__ == "__main__":
