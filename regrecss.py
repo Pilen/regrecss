@@ -34,7 +34,9 @@ def action(action):
     environment[action.__name__] = action
     return action
 
-
+################################################################################
+#                                   Actions                                    #
+################################################################################
 @action
 class Test:
     def __init__(self, name=None):
@@ -128,6 +130,10 @@ def ensure_window(width=None, height=None):
         sys.exit(-1)
 
 
+################################################################################
+#                                  Utilities                                   #
+################################################################################
+
 def ensure_unique_names(items):
     unique = set(item.name for item in items)
     return len(unique) == len(items)
@@ -136,6 +142,120 @@ def expand_url(initial):
     if not initial.startswith("http"):
         return "http://" + initial
     return initial
+
+
+################################################################################
+#                                  Reporting                                   #
+################################################################################
+
+def console_report(comparisons):
+    failed = 0
+    for comparison in comparisons:
+        if comparison.changed != 0:
+            failed += 1
+            print(f"Test {comparison.index} failed! Test {comparison.test}:{comparison.snap} {comparison.window} differs by {comparison.unchanged}px = {comparison.percentage:.1f}%")
+    if failed:
+        print(f"{failed} out of {len(comparisons)} tests failed!")
+    else:
+        print(f"{len(comparisons)} tests completed successfully.")
+
+def html_report(comparisons):
+    def encode(img):
+        output = io.BytesIO()
+        img.save(output, format="PNG")
+        output.seek(0)
+        output_s = output.read()
+        b64 = base64.b64encode(output_s)
+        return str(b64)[2:-1]
+
+    failed = len([comp for comp in comparisons if comp.changed != 0])
+    html = [html_head]
+    for index, comparison in enumerate(comparisons):
+        if comparison.changed != 0:
+            error = encode(comparison.error)
+            base = encode(comparison.base)
+            new = encode(comparison.new)
+            entry = html_entry.format(index=index, comparison=comparison, error=error, base=base, new=new)
+            html.append(entry)
+    html.append(html_end)
+    with open("report.html", "w") as file:
+        file.write("\n".join(html))
+
+
+html_head = """
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>regrecss report</title>
+    <script>
+      function show(index, selected) {
+          parent = document.querySelector("#_"+index);
+          images = parent.children;
+          for (var i = 0; i < images.length; i++) {
+              images[i].style.display = "none";
+          }
+          image = document.querySelector("#_"+index+" ."+selected);
+          image.style.display = "initial";
+      }
+    </script>
+  </head>
+"""
+html_entry = """
+  <h1>Test {index} failed</h1>
+  <p>{comparison.window}</p>
+  <button onclick="show({index}, 'error')">Error</button>
+  <button onclick="show({index}, 'base')">Base</button>
+  <button onclick="show({index}, 'new')">New</button>
+  <div id="_{index}">
+  <img class="error"
+       src="data:image/png;base64,{error}"
+       style="display: initial"/>
+  <img class="base"
+       src="data:image/png;base64,{base}"
+       style="display: none"/>
+  <img class="new"
+       src="data:image/png;base64,{new}"
+       style="display: none"/>
+  </div>
+"""
+html_end = """
+</html>
+"""
+
+
+################################################################################
+#                                  Main flow                                   #
+################################################################################
+
+class Comparison:
+    def __init__(self, description, base, new):
+        self.description = description
+        index, test, window, snap, _ = description.split(":")
+        self.index = int(index)
+        self.test = test
+        self.window = window
+        self.snap = int(snap)
+        self.error = None
+        self.base = base
+        self.new = new
+
+        if base.size != new.size:
+            print("ERROR: There are unexpected inconsistencies in the sizes between the images")
+            sys.exit(-1)
+        table = [0] + [255]*255
+        error = base.copy()
+        difference = ImageChops.difference(base, new)
+        mask = difference.convert("L").point(table)
+        histogram = mask.histogram()
+        self.unchanged, self.changed = histogram[0], histogram[-1]
+        if self.changed != 0:
+            percentage = self.changed / (self.changed + self.unchanged) * 100
+            percentage = math.ceil((percentage * 10)) / 10 # Round up
+            self.percentage = percentage
+
+            color = Image.new("RGB", base.size, "#ff00ff")
+            error.paste(color, mask=mask)
+            self.error = error
 
 
 def execute_tests(config):
@@ -214,110 +334,10 @@ def execute_test_suite(testsuite):
     console_report(results)
     html_report(results)
 
-def console_report(comparisons):
-    failed = 0
-    for comparison in comparisons:
-        if comparison.changed != 0:
-            failed += 1
-            print(f"Test {comparison.index} failed! Test {comparison.test}:{comparison.snap} {comparison.window} differs by {comparison.unchanged}px = {comparison.percentage:.1f}%")
-    if failed:
-        print(f"{failed} out of {len(comparisons)} tests failed!")
-    else:
-        print(f"{len(comparisons)} tests completed successfully.")
 
-def html_report(comparisons):
-    def encode(img):
-        output = io.BytesIO()
-        img.save(output, format="PNG")
-        output.seek(0)
-        output_s = output.read()
-        b64 = base64.b64encode(output_s)
-        return str(b64)[2:-1]
-
-    failed = len([comp for comp in comparisons if comp.changed != 0])
-    html = [html_head]
-    for index, comparison in enumerate(comparisons):
-        if comparison.changed != 0:
-            error = encode(comparison.error)
-            base = encode(comparison.base)
-            new = encode(comparison.new)
-            entry = html_entry.format(index=index, comparison=comparison, error=error, base=base, new=new)
-            html.append(entry)
-    html.append(html_end)
-    with open("report.html", "w") as file:
-        file.write("\n".join(html))
-
-
-html_head = """
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>regrecss report</title>
-    <script>
-      function show(index, selected) {
-          parent = document.querySelector("#_"+index);
-          images = parent.children;
-          for (var i = 0; i < images.length; i++) {
-              images[i].style.display = "none";
-          }
-          image = document.querySelector("#_"+index+" ."+selected);
-          image.style.display = "initial";
-      }
-    </script>
-  </head>
-"""
-html_entry = """
-  <h1>Test {index} failed</h1>
-  <p>{comparison.window}</p>
-  <button onclick="show({index}, 'error')">Error</button>
-  <button onclick="show({index}, 'base')">Base</button>
-  <button onclick="show({index}, 'new')">New</button>
-  <div id="_{index}">
-  <img class="error"
-       src="data:image/png;base64,{error}"
-       style="display: initial"/>
-  <img class="base"
-       src="data:image/png;base64,{base}"
-       style="display: none"/>
-  <img class="new"
-       src="data:image/png;base64,{new}"
-       style="display: none"/>
-  </div>
-"""
-html_end = """
-</html>
-"""
-
-class Comparison:
-    def __init__(self, description, base, new):
-        self.description = description
-        index, test, window, snap, _ = description.split(":")
-        self.index = int(index)
-        self.test = test
-        self.window = window
-        self.snap = int(snap)
-        self.error = None
-        self.base = base
-        self.new = new
-
-        if base.size != new.size:
-            print("ERROR: There are unexpected inconsistencies in the sizes between the images")
-            sys.exit(-1)
-        table = [0] + [255]*255
-        error = base.copy()
-        difference = ImageChops.difference(base, new)
-        mask = difference.convert("L").point(table)
-        histogram = mask.histogram()
-        self.unchanged, self.changed = histogram[0], histogram[-1]
-        if self.changed != 0:
-            percentage = self.changed / (self.changed + self.unchanged) * 100
-            percentage = math.ceil((percentage * 10)) / 10 # Round up
-            self.percentage = percentage
-
-            color = Image.new("RGB", base.size, "#ff00ff")
-            error.paste(color, mask=mask)
-            self.error = error
-
+################################################################################
+#                                     Main                                     #
+################################################################################
 
 def main():
     parser = argparse.ArgumentParser(description="A tool for regression testing webpages/CSS", add_help=False)
