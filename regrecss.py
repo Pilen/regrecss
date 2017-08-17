@@ -129,6 +129,9 @@ def ensure_window(width=None, height=None):
         print("Dimensions does not match")
         sys.exit(-1)
 
+@action
+def get_browser():
+    return current_test.browser
 
 ################################################################################
 #                                  Utilities                                   #
