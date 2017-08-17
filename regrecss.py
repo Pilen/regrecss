@@ -47,7 +47,7 @@ class Test:
         self.snap_index = itertools.count()
 
         if current_test != None:
-            current_test.driver.quit()
+            current_test.browser.quit()
         current_test = self
 
         options = webdriver.ChromeOptions()
@@ -55,8 +55,8 @@ class Test:
         # options.add_argument(f"window-size={window.width}x{window.height}")
         desired = DesiredCapabilities.CHROME
         desired ['loggingPrefs'] = { 'browser':'ALL' }
-        self.driver = webdriver.Chrome(chrome_options=options, desired_capabilities=desired)
-        current = current_test.driver.get_window_size()
+        self.browser = webdriver.Chrome(chrome_options=options, desired_capabilities=desired)
+        current = current_test.browser.get_window_size()
         self.window = Window(current["width"], current["height"], "default")
 
 
@@ -68,19 +68,19 @@ class Window:
         self.name = name or f"{width}x{height}"
     def resize(self):
         current_test.window = self
-        current_test.driver.set_window_size(self.width + gui_width,
+        current_test.browser.set_window_size(self.width + gui_width,
                                             self.height + gui_height)
 
 @action
 def url(path):
-    current_test.driver.get(expand_url(path))
+    current_test.browser.get(expand_url(path))
 
 @action
 def snap(name=None):
     index = next(current_test.snap_index)
     name = name or str(index)
     window_name = current_test.window.name if current_test.window else "default"
-    current_test.driver.get_screenshot_as_file(directory / f"{next(snap_count)}:{current_test.name}:{window_name}:{index}:.png")
+    current_test.browser.get_screenshot_as_file(directory / f"{next(snap_count)}:{current_test.name}:{window_name}:{index}:.png")
 
 @action
 def wait(duration):
@@ -89,7 +89,7 @@ def wait(duration):
 @action
 def await_output(query):
     while True:
-        for entry in current_test.driver.get_log("browser"):
+        for entry in current_test.browser.get_log("browser"):
             if entry["source"] == "console-api":
                 message = entry["message"].split('"', 1)[1][:-1]
                 if message == query:
@@ -105,10 +105,10 @@ def resize(a, b=None):
 @action
 def await_window_change():
     print("Awaiting window change...")
-    # previous = current_test.driver.get_window_size()
+    # previous = current_test.browser.get_window_size()
     previous = {"width": current_test.window.width, "height":current_test.window.height}
     while True:
-        current = current_test.driver.get_window_size()
+        current = current_test.browser.get_window_size()
         if "width" not in current or "height" not in current:
             print("Browser quit unexpectedly")
             sys.exit(-1)
@@ -124,7 +124,7 @@ def ensure_window(width=None, height=None):
     else:
         width = width or test.window.width
         height = height or test.width.height
-    current = current_test.driver.get_window_size()
+    current = current_test.browser.get_window_size()
     if current["width"] + gui_width != width or current["height"] + gui_height != height:
         print("Dimensions does not match")
         sys.exit(-1)
@@ -275,7 +275,7 @@ def execute_tests(config):
     if current_test == None:
         print("No tests in testsuite")
         sys.exit(-1)
-    current_test.driver.quit()
+    current_test.browser.quit()
     if not ensure_unique_names(all_tests):
         print("Error in config file. Tests with identical names")
         sys.exit(-1)
@@ -294,7 +294,6 @@ def create_test_suite(testsuite, configs):
         with tarfile.open(testsuite, "w") as tar:
             for path in directory.iterdir():
                 tar.add(path, arcname=Path("testsuite_DO_NOT_MODIFY")/path.name)
-
 
 def execute_test_suite(testsuite):
     testsuite = Path(testsuite).absolute()
