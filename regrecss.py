@@ -201,8 +201,12 @@ html_head = """
   </head>
 """
 html_entry = """
-  <h1>Test {index} failed</h1>
-  <p>{comparison.window}</p>
+  <h1>Test failed</h1>
+  <p>
+    File: Unknown<br/>
+    Line: Unknown<br/>
+    Window: {comparison.window}
+  </p>
   <button onclick="show({index}, 'error')">Error</button>
   <button onclick="show({index}, 'base')">Base</button>
   <button onclick="show({index}, 'new')">New</button>
@@ -236,8 +240,8 @@ class Comparison:
         self.window = window
         self.snap = int(snap)
         self.error = None
-        self.base = base
-        self.new = new
+        self.base = None
+        self.new = None
 
         if base.size != new.size:
             print("ERROR: There are unexpected inconsistencies in the sizes between the images")
@@ -256,6 +260,8 @@ class Comparison:
             color = Image.new("RGB", base.size, "#ff00ff")
             error.paste(color, mask=mask)
             self.error = error
+            self.base = base
+            self.new = new
 
 
 def execute_tests(config):
